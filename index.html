@@ -38,11 +38,11 @@
   // ===================== حفظ عملية في Firebase =====================
   window.saveAction = async function(entry) {
     try {
-      // كل عميل له document بكوده كـ ID — بيتبدل تلقائياً لو اتغير الحالة
       await setDoc(doc(db, "actions", entry.code), {
         type: entry.type,
         code: entry.code,
         name: entry.name,
+        details: entry.details || '',
         time: entry.time,
         timeDisplay: entry.timeDisplay
       });
@@ -50,6 +50,17 @@
     } catch (e) {
       console.error("Firebase save error:", e);
       showToast("⚠️ خطأ في الحفظ الأونلاين — محفوظ محلياً مؤقتاً");
+      return false;
+    }
+  };
+
+  window.deleteAction = async function(code) {
+    try {
+      const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+      await deleteDoc(doc(db, "actions", code));
+      return true;
+    } catch (e) {
+      console.error("Firebase delete error:", e);
       return false;
     }
   };
@@ -175,10 +186,10 @@ body{font-family:'Cairo',sans-serif;background:#f0f4f8;color:#1a2332;min-height:
 .btn-renew,.btn-update{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:11px 6px;border:none;border-radius:11px;font-family:'Cairo',sans-serif;font-size:12px;font-weight:800;cursor:pointer;transition:all 0.18s}
 .btn-renew{background:#d1fae5;color:#065f46}
 .btn-renew:active{background:#059669;color:#fff}
-.btn-renew.done{background:#059669;color:#fff;opacity:.85;pointer-events:none}
+.btn-renew.done{background:#059669;color:#fff}
 .btn-update{background:#fef3c7;color:#92400e}
 .btn-update:active{background:#d97706;color:#fff}
-.btn-update.done{background:#d97706;color:#fff;opacity:.85;pointer-events:none}
+.btn-update.done{background:#d97706;color:#fff}
 .btn-saving{opacity:0.6;pointer-events:none}
 .status-bar{display:flex;align-items:center;gap:6px;padding:8px 16px}
 .status-bar.renewed{background:#d1fae5;border-top:1px solid #a7f3d0}
@@ -241,6 +252,30 @@ body{font-family:'Cairo',sans-serif;background:#f0f4f8;color:#1a2332;min-height:
 /* SETUP BANNER */
 mark{background:#fef08a;color:#713f12;border-radius:2px;padding:0 1px}
 .hidden{display:none}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:500;display:none;align-items:flex-end;justify-content:center}
+.modal-overlay.show{display:flex;animation:fadeIn 0.2s}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal-box{background:#fff;border-radius:20px 20px 0 0;padding:20px 16px 30px;width:100%;max-width:500px;animation:slideUp2 0.3s cubic-bezier(0.22,0.61,0.36,1)}
+@keyframes slideUp2{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-title{font-size:15px;font-weight:800;color:#111827;margin-bottom:6px;text-align:center}
+.modal-client{font-size:12px;color:#6b7280;text-align:center;margin-bottom:16px;font-weight:600}
+.modal-options{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.modal-opt{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:2px solid #e5e7eb;border-radius:12px;cursor:pointer;transition:all 0.15s;background:#fff}
+.modal-opt.selected{border-color:#d97706;background:#fefce8}
+.modal-opt input[type=checkbox]{width:18px;height:18px;accent-color:#d97706;flex-shrink:0;margin-top:2px}
+.modal-opt-label{font-size:13px;font-weight:700;color:#374151;flex:1}
+.modal-extra{margin-top:6px;display:none}
+.modal-extra.show{display:block}
+.modal-input{width:100%;border:2px solid #e5e7eb;border-radius:10px;padding:9px 12px;font-family:"Cairo",sans-serif;font-size:13px;color:#374151;outline:none;direction:rtl;margin-top:4px}
+.modal-input:focus{border-color:#d97706}
+.modal-btns{display:flex;gap:10px}
+.modal-cancel{flex:1;padding:12px;border:2px solid #e5e7eb;border-radius:12px;background:#fff;font-family:"Cairo",sans-serif;font-size:13px;font-weight:700;color:#6b7280;cursor:pointer}
+.modal-confirm{flex:2;padding:12px;border:none;border-radius:12px;background:#d97706;font-family:"Cairo",sans-serif;font-size:13px;font-weight:800;color:#fff;cursor:pointer}
+.log-undo{background:none;border:1px solid #fca5a5;border-radius:8px;padding:3px 8px;font-family:"Cairo",sans-serif;font-size:10px;font-weight:700;color:#ef4444;cursor:pointer;margin-top:4px;display:block}
+.log-undo:active{background:#fee2e2}
+.log-details{font-size:10px;color:#d97706;margin-top:2px;font-weight:600}
 </style>
 </head>
 <body>
@@ -300,6 +335,57 @@ mark{background:#fef08a;color:#713f12;border-radius:2px;padding:0 1px}
     <div id="statsContent"></div>
   </div>
 </main>
+
+
+<!-- NEEDS UPDATE MODAL -->
+<div class="modal-overlay" id="needsModal" onclick="closeModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-title">⚠️ يحتاج تحديث</div>
+    <div class="modal-client" id="modalClientName"></div>
+    <div class="modal-options">
+      <div class="modal-opt" onclick="toggleOpt(this,'fridge')">
+        <input type="checkbox" id="chk-fridge" onclick="event.stopPropagation();toggleOpt(this.closest('.modal-opt'),'fridge')">
+        <div class="modal-opt-label">
+          🧊 تغيير ثلاجة
+          <div class="modal-extra" id="extra-fridge">
+            <input class="modal-input" id="inp-fridge" placeholder="رقم الثلاجة الجديدة..." onclick="event.stopPropagation()">
+          </div>
+        </div>
+      </div>
+      <div class="modal-opt" onclick="toggleOpt(this,'name')">
+        <input type="checkbox" id="chk-name" onclick="event.stopPropagation();toggleOpt(this.closest('.modal-opt'),'name')">
+        <div class="modal-opt-label">
+          👤 تغيير اسم
+          <div class="modal-extra" id="extra-name">
+            <input class="modal-input" id="inp-name" placeholder="الاسم الجديد..." onclick="event.stopPropagation()">
+          </div>
+        </div>
+      </div>
+      <div class="modal-opt" onclick="toggleOpt(this,'address')">
+        <input type="checkbox" id="chk-address" onclick="event.stopPropagation();toggleOpt(this.closest('.modal-opt'),'address')">
+        <div class="modal-opt-label">
+          📍 تغيير عنوان
+          <div class="modal-extra" id="extra-address">
+            <input class="modal-input" id="inp-address" placeholder="العنوان الجديد..." onclick="event.stopPropagation()">
+          </div>
+        </div>
+      </div>
+      <div class="modal-opt" onclick="toggleOpt(this,'other')">
+        <input type="checkbox" id="chk-other" onclick="event.stopPropagation();toggleOpt(this.closest('.modal-opt'),'other')">
+        <div class="modal-opt-label">
+          📝 ملاحظة أخرى
+          <div class="modal-extra" id="extra-other">
+            <input class="modal-input" id="inp-other" placeholder="اكتب الملاحظة..." onclick="event.stopPropagation()">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="document.getElementById('needsModal').classList.remove('show')">إلغاء</button>
+      <button class="modal-confirm" onclick="confirmNeedsUpdate()">⚠️ تسجيل التحديث</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast-wrap" id="toastWrap"></div>
 <div class="sync-bar" id="syncBar"></div>
@@ -427,8 +513,8 @@ function buildClientCard(c, q='') {
     ${c.fridges && c.fridges !== '—' ? `<div class="card-row"><div class="row-label">🧊 الثلاجات</div><div class="row-val green" style="font-size:11px">${highlight(c.fridges,q)}</div></div>` : ''}
     ${statusBar}
     <div class="card-actions">
-      <button class="btn-renew ${renewDone}" onclick="doAction('renew','${c.newCode}','${c.name.replace(/'/g,"\\'")}',this)">✅ تجديد عقد</button>
-      <button class="btn-update ${updateDone}" onclick="doAction('needs','${c.newCode}','${c.name.replace(/'/g,"\\'")}',this)">⚠️ يحتاج تحديث</button>
+      <button class="btn-renew ${renewDone}" onclick="handleRenewClick('${c.newCode}','${c.name.replace(/'/g,"\\'")}',this)">${renewDone ? '✅ تم تجديد العقد' : '✅ تجديد عقد'}</button>
+      <button class="btn-update ${updateDone}" onclick="handleNeedsClick('${c.newCode}','${c.name.replace(/'/g,"\\'")}',this)">${updateDone ? '⚠️ تم التسجيل' : '⚠️ يحتاج تحديث'}</button>
     </div>
   </div>`;
 }
@@ -465,33 +551,107 @@ function expandClient(code) {
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
+// ==================== BUTTON HANDLERS ====================
+async function handleRenewClick(code, name, btn) {
+  if (btn.classList.contains('btn-saving')) return;
+  if (btn.classList.contains('done')) {
+    // already done — undo it
+    if (!confirm('إلغاء تجديد عقد ' + name + '؟')) return;
+    await undoAction(code);
+    return;
+  }
+  await doAction('renew', code, name, btn, '');
+}
+
+function handleNeedsClick(code, name, btn) {
+  if (btn.classList.contains('btn-saving')) return;
+  if (btn.classList.contains('done')) {
+    // already done — undo it
+    if (!confirm('إلغاء تسجيل تحديث ' + name + '؟')) return;
+    undoAction(code);
+    return;
+  }
+  openNeedsModal(code, name, btn);
+}
+
+// ==================== MODAL (يحتاج تحديث) ====================
+let modalCode = '', modalName = '', modalBtn = null;
+
+function openNeedsModal(code, name, btn) {
+  if (btn.classList.contains('done')) return;
+  modalCode = code; modalName = name; modalBtn = btn;
+  document.getElementById('modalClientName').textContent = name + ' — ' + code;
+  // reset
+  ['fridge','name','address','other'].forEach(k => {
+    const chk = document.getElementById('chk-'+k);
+    chk.checked = false;
+    document.getElementById('inp-'+k).value = '';
+    document.getElementById('extra-'+k).classList.remove('show');
+    chk.closest('.modal-opt')?.classList.remove('selected');
+  });
+  document.getElementById('needsModal').classList.add('show');
+}
+
+function closeModal(e) {
+  if (e.target.id === 'needsModal') document.getElementById('needsModal').classList.remove('show');
+}
+
+function toggleOpt(el, key) {
+  // el is the .modal-opt div
+  const div = el.classList.contains('modal-opt') ? el : el.closest('.modal-opt');
+  if (!div) return;
+  const chk = document.getElementById('chk-'+key);
+  // toggle checkbox
+  chk.checked = !chk.checked;
+  document.getElementById('extra-'+key).classList.toggle('show', chk.checked);
+  div.classList.toggle('selected', chk.checked);
+}
+
+async function confirmNeedsUpdate() {
+  const details = [];
+  if (document.getElementById('chk-fridge').checked) {
+    const v = document.getElementById('inp-fridge').value.trim();
+    details.push('🧊 ثلاجة: ' + (v || 'غير محدد'));
+  }
+  if (document.getElementById('chk-name').checked) {
+    const v = document.getElementById('inp-name').value.trim();
+    details.push('👤 اسم: ' + (v || 'غير محدد'));
+  }
+  if (document.getElementById('chk-address').checked) {
+    const v = document.getElementById('inp-address').value.trim();
+    details.push('📍 عنوان: ' + (v || 'غير محدد'));
+  }
+  if (document.getElementById('chk-other').checked) {
+    const v = document.getElementById('inp-other').value.trim();
+    details.push('📝 ' + (v || 'ملاحظة'));
+  }
+  document.getElementById('needsModal').classList.remove('show');
+  await doAction('needs', modalCode, modalName, modalBtn, details.join(' | '));
+}
+
 // ==================== ACTIONS ====================
-async function doAction(type, code, name, btn) {
+async function doAction(type, code, name, btn, details='') {
   if (btn.classList.contains('done') || btn.classList.contains('btn-saving')) return;
 
-  // Optimistic UI — حدّث الواجهة فوراً
   btn.classList.add('btn-saving');
   btn.textContent = '⏳ جاري الحفظ...';
 
   const entry = {
-    type, code, name,
+    type, code, name, details,
     time: new Date().toISOString(),
     timeDisplay: new Date().toLocaleString('ar-EG')
   };
 
-  // تحديث الـ state المحلي
   actionLog = actionLog.filter(e => e.code !== code);
   actionLog.unshift(entry);
-  saveToLocalStorage(); // احتياطي محلي
+  saveToLocalStorage();
 
-  // حفظ في Firebase
   const saved = window.saveAction ? await window.saveAction(entry) : false;
 
-  // تحديث الأزرار
   btn.classList.remove('btn-saving');
   btn.classList.add('done');
   const isRenew = type === 'renew';
-  btn.textContent = isRenew ? (saved ? '✅ تم التجديد ✓🔥' : '✅ تم التجديد ✓') : (saved ? '⚠️ تم التسجيل ✓🔥' : '⚠️ تم التسجيل ✓');
+  btn.textContent = isRenew ? '✅ تم تجديد العقد' : '⚠️ تم التسجيل';
 
   const actions = btn.parentElement;
   const other = isRenew ? actions.querySelector('.btn-update') : actions.querySelector('.btn-renew');
@@ -499,15 +659,29 @@ async function doAction(type, code, name, btn) {
 
   const card = btn.closest('.client-card');
   let bar = card.querySelector('.status-bar');
+  const detailsHtml = details ? `<div style="font-size:10px;color:#92400e;margin-top:3px">${details}</div>` : '';
   const barHtml = isRenew
     ? `<div class="status-bar renewed"><span>✅ تم تجديد العقد — محفوظ في Firebase 🔥</span></div>`
-    : `<div class="status-bar needs"><span>⚠️ يحتاج تحديث — محفوظ في Firebase 🔥</span></div>`;
+    : `<div class="status-bar needs"><span>⚠️ يحتاج تحديث 🔥</span>${detailsHtml}</div>`;
   if (bar) bar.outerHTML = barHtml;
   else actions.insertAdjacentHTML('beforebegin', barHtml);
 
   updateStats();
-  showToast(isRenew ? `✅ تجديد: ${name} — محفوظ 🔥` : `⚠️ تحديث: ${name} — محفوظ 🔥`);
+  showToast(isRenew ? `✅ تجديد: ${name} 🔥` : `⚠️ تحديث: ${name} 🔥`);
   if (currentTab === 'log') renderLog();
+}
+
+// ==================== UNDO ====================
+async function undoAction(code) {
+  actionLog = actionLog.filter(e => e.code !== code);
+  saveToLocalStorage();
+  if (window.deleteAction) await window.deleteAction(code);
+  updateStats();
+  renderAllList();
+  renderSearch(document.getElementById('searchInput').value);
+  if (currentTab === 'log') renderLog();
+  if (currentTab === 'stats') renderStats();
+  showToast('🗑️ تم إلغاء العملية');
 }
 
 // ==================== LOG ====================
@@ -521,7 +695,12 @@ function renderLog() {
   list.innerHTML = actionLog.map(e => `
   <div class="log-item">
     <div class="log-icon ${e.type==='renew'?'renewed':'needs'}">${e.type==='renew'?'✅':'⚠️'}</div>
-    <div class="log-info"><div class="log-name">${e.name}</div><div class="log-meta">كود: ${e.code}</div></div>
+    <div class="log-info">
+      <div class="log-name">${e.name}</div>
+      <div class="log-meta">كود: ${e.code}</div>
+      ${e.details ? `<div class="log-details">${e.details}</div>` : ''}
+      <button class="log-undo" onclick="undoAction('${e.code}')">🗑️ إلغاء</button>
+    </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
       <span class="log-type ${e.type==='renew'?'renewed':'needs'}">${e.type==='renew'?'تجديد عقد':'يحتاج تحديث'}</span>
       <span class="log-time">${e.timeDisplay}</span>
@@ -530,8 +709,8 @@ function renderLog() {
 }
 function exportLog() {
   if (!actionLog.length) { showToast('⚠️ لا توجد بيانات للتصدير'); return; }
-  const rows = [['النوع','كود العميل','اسم العميل','التاريخ والوقت']];
-  actionLog.forEach(e => rows.push([e.type==='renew'?'تجديد عقد':'يحتاج تحديث', e.code, e.name, e.timeDisplay]));
+  const rows = [['النوع','كود العميل','اسم العميل','التفاصيل','التاريخ والوقت']];
+  actionLog.forEach(e => rows.push([e.type==='renew'?'تجديد عقد':'يحتاج تحديث', e.code, e.name, e.details||'', e.timeDisplay]));
   const csv = '\uFEFF'+rows.map(r=>r.map(v=>`"${v}"`).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
